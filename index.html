@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPSC BD Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: dense working board. Header, four summary tiles, an attention strip, then tabs over a stage-per-column Kanban. */
+:root{
+  --bg:#f3f5f4; --surface:#ffffff; --col:#e9edec; --ink:#182225; --muted:#5a6b70; --line:#d6dddc;
+  --accent:#0e5a63; --accent-ink:#ffffff; --accent-soft:#dcedee;
+  --warn:#8a4f00; --warn-bg:#fcecc8; --bad:#a3262a; --bad-bg:#fadcdc; --good:#1d6a39; --good-bg:#d9f1e2;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0e1416; --surface:#172124; --col:#121a1c; --ink:#e5ecec; --muted:#93a5a9; --line:#2a383c;
+    --accent:#62c4ce; --accent-ink:#06282c; --accent-soft:#1a3b40;
+    --warn:#f0b35a; --warn-bg:#3b2d10; --bad:#f08a8c; --bad-bg:#3e1b1c; --good:#7fd29b; --good-bg:#16331f;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0e1416; --surface:#172124; --col:#121a1c; --ink:#e5ecec; --muted:#93a5a9; --line:#2a383c;
+  --accent:#62c4ce; --accent-ink:#06282c; --accent-soft:#1a3b40;
+  --warn:#f0b35a; --warn-bg:#3b2d10; --bad:#f08a8c; --bad-bg:#3e1b1c; --good:#7fd29b; --good-bg:#16331f;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+[hidden]{display:none !important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.4}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#app{height:100%;display:flex;flex-direction:column;gap:12px;padding:16px;overflow:auto}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap}
+h1{font-size:20px;line-height:1.2;margin:0;font-weight:600;letter-spacing:-.01em}
+.sub{margin:2px 0 0;color:var(--muted);font-size:13px}
+.top-actions{display:flex;align-items:center;gap:8px}
+.btn{border:1px solid var(--line);background:var(--surface);padding:7px 12px;border-radius:6px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;line-height:1.3;padding:2px 7px;border-radius:999px;background:var(--col);color:var(--muted);border:1px solid var(--line);white-space:nowrap;max-width:100%}
+.chip.warn{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.chip.bad{background:var(--bad-bg);color:var(--bad);border-color:transparent}
+.chip.good{background:var(--good-bg);color:var(--good);border-color:transparent}
+.chip.verify{background:var(--accent-soft);color:var(--accent);border-color:transparent;font-weight:500}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.tile .lbl{font-size:12px;color:var(--muted)}
+.tile .big{font-family:var(--mono);font-size:22px;font-weight:500;margin-top:2px;font-variant-numeric:tabular-nums}
+.tile .sm{font-size:12px;color:var(--muted);margin-top:2px}
+.attn{background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.attn summary{cursor:pointer;padding:8px 12px;font-weight:500;display:flex;gap:8px;align-items:center}
+.attn ul{list-style:none;margin:0;padding:0 12px 8px;max-height:150px;overflow:auto}
+.attn li{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:1px solid var(--line);cursor:pointer}
+.attn li:hover .an{text-decoration:underline}
+.attn .an{font-weight:500}
+.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--muted);transform:translateY(-1px)}
+.dot.bad{background:var(--bad)} .dot.warn{background:var(--warn)}
+.attn .why{color:var(--muted);font-size:12.5px}
+.bar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.tabs{display:flex;gap:2px;background:var(--col);padding:3px;border-radius:8px}
+.tab{border:0;background:transparent;padding:6px 12px;border-radius:6px;cursor:pointer;color:var(--muted);font-weight:500}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 0 0 1px var(--line)}
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.filters input[type=search],.filters select{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface);min-width:0}
+.filters input[type=search]{width:190px}
+.filters label.chk{display:flex;gap:5px;align-items:center;color:var(--muted);font-size:13px}
+.view{flex:1 1 auto;min-height:440px;display:flex;flex-direction:column}
+.empty{color:var(--muted);padding:24px;text-align:center}
+.board{flex:1 1 0;min-height:0;display:flex;gap:10px;overflow-x:auto;padding-bottom:4px}
+.col{flex:0 0 276px;display:flex;flex-direction:column;min-height:0;background:var(--col);border-radius:8px;border-top:3px solid color-mix(in srgb,var(--accent) calc(18% + var(--i) * 12%),var(--line))}
+.col.won{border-top-color:var(--good)} .col.lost{border-top-color:var(--muted)}
+.col.over{outline:2px dashed var(--accent);outline-offset:-2px}
+.col-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:8px 10px 6px}
+.col-head h2{margin:0;font-size:13px;font-weight:600}
+.col-head .n{font-family:var(--mono);font-size:12px;color:var(--muted);margin-left:6px;font-weight:400}
+.col-head .sum{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.add{border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:0 4px;border-radius:4px}
+.add:hover{color:var(--accent);background:var(--surface)}
+.col-body{flex:1;overflow-y:auto;padding:4px 8px 10px;display:flex;flex-direction:column;gap:8px;min-height:60px}
+.drop{border:1px dashed var(--line);border-radius:6px;color:var(--muted);font-size:12px;text-align:center;padding:14px 6px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:9px 10px;display:flex;flex-direction:column;gap:5px;cursor:pointer}
+.card:hover{border-color:var(--accent)}
+.card.drag{opacity:.45}
+.card-top{display:flex;gap:6px;justify-content:space-between;align-items:flex-start}
+.card-name{font-weight:600;font-size:13.5px;overflow-wrap:anywhere}
+.card-org{font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.card-next{font-size:12.5px;overflow-wrap:anywhere}
+.card-next.none{color:var(--muted);font-style:italic}
+.card-foot{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.scroll{flex:1;min-height:0;overflow:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:980px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{position:sticky;top:0;background:var(--surface);font-size:12px;color:var(--muted);font-weight:500;cursor:pointer;white-space:nowrap;z-index:1}
+th[aria-sort]{color:var(--ink)}
+tbody tr{cursor:pointer} tbody tr:hover{background:var(--col)}
+td.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.dl{padding:4px 14px 14px}
+.dl h3{font-size:13px;margin:16px 0 4px;display:flex;gap:8px;align-items:center}
+.dl h4{font-size:12px;margin:12px 0 2px;color:var(--muted);font-weight:500}
+.dl-row{display:grid;grid-template-columns:150px 1fr;gap:10px;padding:6px 0;border-top:1px solid var(--line);cursor:pointer}
+.dl-row:hover .dn{text-decoration:underline}
+.dl-row .dn{font-weight:500}
+.dl-row .ds{color:var(--muted);font-size:12.5px}
+@media (max-width:560px){.dl-row{grid-template-columns:1fr;gap:2px}}
+.overlay{position:fixed;inset:0;background:rgba(10,18,20,.55);display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto;z-index:20}
+.overlay[hidden]{display:none}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:10px;width:100%;max-width:720px;margin:auto;display:flex;flex-direction:column}
+.panel header{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-bottom:1px solid var(--line)}
+.panel header h2{margin:0;font-size:16px}
+.panel .x{border:0;background:transparent;font-size:22px;line-height:1;cursor:pointer;color:var(--muted)}
+.form{padding:14px 16px;display:grid;grid-template-columns:1fr 1fr;gap:10px 12px}
+.fld{display:flex;flex-direction:column;gap:3px;min-width:0}
+.fld.span2{grid-column:1 / -1}
+.fld.hide{display:none}
+.fld label{font-size:12px;color:var(--muted)}
+.fld input,.fld select,.fld textarea{padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);width:100%;min-width:0}
+.fld textarea{resize:vertical}
+.note{grid-column:1 / -1;font-size:12.5px;color:var(--muted)}
+.note a{color:var(--accent)}
+.verifyrow{grid-column:1 / -1;display:flex;gap:8px;align-items:center;background:var(--accent-soft);padding:8px 10px;border-radius:6px;font-size:13px}
+.err{grid-column:1 / -1;color:var(--bad);font-size:13px}
+.foot{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 16px;border-top:1px solid var(--line)}
+.foot .sp{flex:1}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;z-index:30;max-width:90%;font-size:13px}
+.toast[hidden]{display:none}
+.who{font-size:12.5px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gate{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:16px;z-index:40}
+.gate[hidden]{display:none}
+.gate-card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;max-width:420px;width:100%;display:flex;flex-direction:column;gap:12px}
+.gate-card p{margin:0;color:var(--muted)}
+.gate-actions{display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:560px){.form{grid-template-columns:1fr}.fld.span2{grid-column:auto}.filters input[type=search]{width:100%}}
+@media (prefers-reduced-motion:no-preference){.card{transition:border-color .12s}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="top">
+    <div>
+      <h1>GPSC BD Pipeline</h1>
+      <p class="sub">Government &amp; Public Sector Consulting, Kirtane &amp; Pandit. Opportunities up to the work order.</p>
+    </div>
+    <div class="top-actions">
+      <span id="who" class="who" hidden></span>
+      <span id="rolechip" class="chip warn" hidden>View only</span>
+      <button id="btn-import" class="btn" type="button" hidden>Import</button>
+      <button id="btn-export" class="btn" type="button" hidden>Export</button>
+      <button id="btn-new" class="btn primary" type="button">New opportunity</button>
+      <button id="btn-out" class="btn" type="button" hidden>Sign out</button>
+      <input id="file-import" type="file" accept="application/json,.json" hidden>
+    </div>
+  </header>
+  <section id="tiles" class="tiles" aria-label="Summary"></section>
+  <details id="attn" class="attn" open>
+    <summary id="attn-sum">Needs attention</summary>
+    <ul id="attn-list"></ul>
+  </details>
+  <div class="bar">
+    <div class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" role="tab" data-v="board" aria-selected="true" type="button">Board</button>
+      <button class="tab" role="tab" data-v="table" aria-selected="false" type="button">Table</button>
+      <button class="tab" role="tab" data-v="dates" aria-selected="false" type="button">Deadlines</button>
+    </div>
+    <div class="filters">
+      <input id="q" type="search" placeholder="Search projects" aria-label="Search">
+      <select id="flt-owner" aria-label="Filter by action owner"><option value="">All owners</option></select>
+      <select id="flt-route" aria-label="Filter by entry route"><option value="">All entry routes</option></select>
+      <label class="chk"><input id="flt-closed" type="checkbox" checked> Show won and lost</label>
+    </div>
+  </div>
+  <main id="view" class="view"></main>
+</div>
+
+<div id="modal" class="overlay" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="m-title">
+    <header><h2 id="m-title">Opportunity</h2><button class="x" id="m-x" type="button" aria-label="Close">&times;</button></header>
+    <div class="form" id="form-grid"></div>
+    <div class="foot">
+      <button class="btn danger" id="m-del" type="button" hidden>Delete</button>
+      <span class="sp" id="m-meta"></span>
+      <button class="btn" id="m-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="m-save" type="button">Save</button>
+    </div>
+  </div>
+</div>
+<div id="dls"></div>
+<div id="gate" class="gate">
+  <div class="gate-card">
+    <h1>GPSC BD Pipeline</h1>
+    <p id="gate-msg">Sign in with your Google account to continue.</p>
+    <div class="gate-actions">
+      <button id="gate-btn" class="btn primary" type="button">Sign in with Google</button>
+      <button id="gate-out" class="btn" type="button" hidden>Use a different account</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="app.js"></script>
+<script type="module" src="backend.js"></script>
+
+</body>
+</html>
