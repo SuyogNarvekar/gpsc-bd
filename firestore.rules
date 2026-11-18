@@ -30,5 +30,17 @@ service cloud.firestore {
       allow create, update: if isMember() && role() in ['admin', 'editor'];
       allow delete: if isMember() && role() == 'admin';
     }
+
+    // TUMC tracker. Anyone with the link can read; only K&P editors and admins can change.
+    match /tumc_req/{id} {
+      allow read: if true;
+      allow create, update: if isMember() && role() in ['admin', 'editor'];
+      allow delete: if isMember() && role() == 'admin';
+    }
+    match /tumc_slots/{id} {
+      allow read: if true;
+      allow create, update: if isMember() && role() in ['admin', 'editor'];
+      allow delete: if isMember() && role() == 'admin';
+    }
   }
 }
