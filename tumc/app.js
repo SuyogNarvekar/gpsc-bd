@@ -7,7 +7,8 @@
 
   var S = {
     db: null, api: null, reqs: [], slots: {}, user: null, loaded: { req: false, slot: false },
-    f: { q: '', batch: '', stream: '', status: '' }, editing: null, failed: false
+    f: { q: '', batch: '', stream: '', status: '' }, editing: null, failed: false,
+    tab: /details/.test(window.location.hash || '') ? 'details' : 'summary', open: {}, printing: false
   };
 
   // ---------- helpers ----------
@@ -71,6 +72,20 @@
   }
   function title(r) { return r.designation; }
   function levelChip(r) { return r.level && r.designation.indexOf(r.level) < 0 ? r.level : ''; }
+  function posName(r) { return title(r) + (levelChip(r) ? ' (' + levelChip(r) + ')' : ''); }
+  function cat(st) { return st === 'Joined' ? 'joined' : st === 'Offer accepted' ? 'accepted' : st === 'Offer shared' ? 'offer' : st === 'Open' ? 'open' : 'prog'; }
+  function tally(list) {
+    var t = { total: 0, joined: 0, accepted: 0, offer: 0, prog: 0, open: 0 };
+    list.forEach(function (x) { t.total++; t[cat(x.s.status)]++; });
+    t.filled = t.joined + t.accepted;
+    return t;
+  }
+  function bar(t) {
+    var pct = function (n) { return (t.total ? n / t.total * 100 : 0) + '%'; };
+    return h('div', { class: 'prog', 'aria-hidden': 'true' },
+      h('i', { class: 'j', style: 'width:' + pct(t.joined) }), h('i', { class: 'f', style: 'width:' + pct(t.accepted) }),
+      h('i', { class: 'o', style: 'width:' + pct(t.offer) }), h('i', { class: 'p', style: 'width:' + pct(t.prog) }));
+  }
 
   // ---------- data ----------
   function onReqSnap(snap) {
@@ -152,41 +167,100 @@
   function filtering() { return !!(S.f.q || S.f.status); }
 
   function renderTiles() {
-    var tot = 0, filled = 0, joined = 0, offers = 0, prog = 0, open = 0;
-    allSlots().forEach(function (x) {
-      var st = x.s.status; tot++;
-      if (st === 'Joined') { joined++; filled++; } else if (st === 'Offer accepted') filled++;
-      else if (st === 'Offer shared') offers++;
-      else if (st === 'Open') open++; else prog++;
-    });
+    var t = tally(allSlots());
     var tiles = $('tiles'); tiles.textContent = '';
     function tile(l, big, sm) { return h('div', { class: 'tile' }, h('div', { class: 'lbl', text: l }), h('div', { class: 'big', text: String(big) }), sm ? h('div', { class: 'sm', text: sm }) : null); }
-    var pj = tot ? (joined / tot * 100) : 0, pf = tot ? ((filled - joined) / tot * 100) : 0;
-    tiles.appendChild(h('div', { class: 'tile' }, h('div', { class: 'lbl', text: 'Positions filled' }), h('div', { class: 'big', text: filled + ' / ' + tot }),
-      h('div', { class: 'prog', 'aria-hidden': 'true' }, h('i', { class: 'j', style: 'width:' + pj + '%' }), h('i', { class: 'f', style: 'width:' + pf + '%' }))));
-    tiles.appendChild(tile('Joined', joined));
-    tiles.appendChild(tile('Offers awaiting acceptance', offers));
-    tiles.appendChild(tile('Profiles in progress', prog, 'Shared or selected, no offer yet'));
-    tiles.appendChild(tile('Open positions', open, 'No candidate yet'));
+    tiles.appendChild(h('div', { class: 'tile' }, h('div', { class: 'lbl', text: 'Positions filled' }), h('div', { class: 'big', text: t.filled + ' / ' + t.total }), bar(t)));
+    tiles.appendChild(tile('Joined', t.joined));
+    tiles.appendChild(tile('Offers awaiting acceptance', t.offer));
+    tiles.appendChild(tile('Profiles in progress', t.prog, 'Shared or selected, no offer yet'));
+    tiles.appendChild(tile('Open positions', t.open, 'No candidate yet'));
   }
 
-  function renderSchedule() {
-    var rows = allSlots().filter(function (x) { return x.s.doj && x.s.candidate; })
+  function goDetails(r) {
+    S.f = { q: '', batch: '', stream: '', status: '' };
+    if (r) S.open[r.id] = true;
+    setTab('details');
+    if (r) {
+      var el = document.getElementById('line-' + r.id);
+      if (el && el.scrollIntoView) el.scrollIntoView({ block: 'start' });
+    }
+  }
+  function setTab(t) {
+    S.tab = t;
+    try { window.history.replaceState(null, '', t === 'details' ? '#details' : window.location.pathname + window.location.search); } catch (e) { /* ignore */ }
+    render();
+  }
+
+  function num(n) { return h('td', { class: 'num', text: String(n) }); }
+  function posLabel(r) { return r.stream + ': ' + posName(r); }
+
+  function renderSummary() {
+    var body = $('sum-body'); body.textContent = '';
+    if (!S.loaded.req || !S.loaded.slot) { if (!S.failed && !$('banner').textContent) body.appendChild(h('div', { class: 'empty', text: 'Loading...' })); return; }
+    if (!S.reqs.length) { body.appendChild(h('div', { class: 'empty', text: 'No requirements recorded yet.' })); return; }
+    var slots = allSlots(), today = todayIso();
+
+    // by stream
+    var streams = [];
+    S.reqs.forEach(function (r) { if (streams.indexOf(r.stream) < 0) streams.push(r.stream); });
+    var head = ['Stream', 'Needed', 'Filled', 'Offer pending', 'In progress', 'Open', 'Progress'];
+    function thead(cols, nums) { return h('thead', null, h('tr', null, cols.map(function (c, i) { return h('th', { class: (nums || []).indexOf(i) >= 0 ? 'num' : '', text: c }); }))); }
+    var all = tally(slots);
+    body.appendChild(h('section', { class: 'box bx' }, h('h2', { text: 'By stream' }),
+      h('div', { class: 'scroll' }, h('table', { class: 'sumtbl' }, thead(head, [1, 2, 3, 4, 5]),
+        h('tbody', null, streams.map(function (s) {
+          var t = tally(slots.filter(function (x) { return x.r.stream === s; }));
+          return h('tr', null, h('td', { text: s }), num(t.total), num(t.filled), num(t.offer), num(t.prog), num(t.open), h('td', { class: 'barcell' }, bar(t)));
+        }), h('tr', { class: 'totrow' }, h('td', { text: 'All streams' }), num(all.total), num(all.filled), num(all.offer), num(all.prog), num(all.open), h('td', { class: 'barcell' }, bar(all))))))));
+
+    // needs attention and joining schedule
+    var late = slots.filter(function (x) { return x.s.candidate && x.s.status === 'Offer accepted' && x.s.doj && x.s.doj < today; });
+    var nodate = slots.filter(function (x) { return x.s.candidate && x.s.status === 'Offer accepted' && !x.s.doj; });
+    var offers = slots.filter(function (x) { return x.s.candidate && x.s.status === 'Offer shared'; });
+    function group(label, list, why) {
+      if (!list.length) return null;
+      return h('div', { class: 'attg' }, h('div', { class: 'attl' }, label + ' (' + list.length + ')'), h('div', { class: 'legend', text: why }),
+        h('ul', null, list.map(function (x) {
+          return h('li', null, h('b', { text: x.s.candidate }), ' ' + posLabel(x.r), x.s.doj ? ' ' : null, x.s.doj ? chip(fmtDate(x.s.doj) + (x.s.tentative ? ' tentative' : ''), 'warn') : null);
+        })));
+    }
+    var att = [
+      group('Joining date passed', late, 'Offer accepted and the date has gone by. Confirm whether they joined.'),
+      group('Offers awaiting acceptance', offers, 'Offer shared, not yet accepted.'),
+      group('Accepted, no joining date', nodate, 'Add the date of joining.')
+    ].filter(Boolean);
+    var sched = slots.filter(function (x) { return x.s.doj && x.s.candidate; })
       .sort(function (a, b) { return a.s.doj < b.s.doj ? -1 : a.s.doj > b.s.doj ? 1 : 0; });
-    $('sched-sum').textContent = 'Joining schedule (' + rows.length + ')';
-    var body = $('sched-body'); body.textContent = '';
-    if (!rows.length) { body.appendChild(h('div', { class: 'empty', text: 'No joining dates recorded yet.' })); return; }
-    var today = todayIso();
-    body.appendChild(h('table', null,
-      h('thead', null, h('tr', null, ['Date of joining', 'Candidate', 'Position', 'Status'].map(function (t) { return h('th', { text: t }); }))),
-      h('tbody', null, rows.map(function (x) {
-        var late = x.s.status === 'Offer accepted' && x.s.doj < today;
-        return h('tr', null,
-          h('td', { text: fmtDate(x.s.doj) + (x.s.tentative ? ' (tentative)' : '') }),
-          h('td', { text: x.s.candidate }),
-          h('td', { text: x.r.stream + ': ' + title(x.r) }),
-          h('td', null, chip(x.s.status, x.s.status === 'Joined' ? 'good' : ''), late ? [' ', chip('Date passed, confirm joining', 'warn')] : null));
-      }))));
+    body.appendChild(h('div', { class: 'two' },
+      h('section', { class: 'box bx' }, h('h2', { text: 'Needs attention' }),
+        att.length ? att : h('div', { class: 'legend', text: 'Nothing needs attention right now.' })),
+      h('section', { class: 'box bx' }, h('h2', { text: 'Joining schedule (' + sched.length + ')' }),
+        sched.length ? h('div', { class: 'scroll' }, h('table', { class: 'sumtbl slim' }, thead(['Date', 'Candidate', 'Position', 'Status']),
+          h('tbody', null, sched.map(function (x) {
+            return h('tr', null, h('td', { text: fmtDate(x.s.doj) + (x.s.tentative ? ' (tentative)' : '') }), h('td', { text: x.s.candidate }), h('td', { text: posLabel(x.r) }),
+              h('td', null, chip(x.s.status, x.s.status === 'Joined' ? 'good' : '')));
+          })))) : h('div', { class: 'legend', text: 'No joining dates recorded yet.' }))));
+
+    // by requirement
+    var batches = [];
+    S.reqs.forEach(function (r) { if (batches.indexOf(r.batch) < 0) batches.push(r.batch); });
+    var rows = [];
+    batches.forEach(function (b) {
+      var rs = S.reqs.filter(function (r) { return r.batch === b; }), first = rs[0];
+      var meta = [first.receivedOn ? 'received ' + fmtDate(first.receivedOn) : 'received date not recorded'].join('');
+      rows.push(h('tr', { class: 'bhead' }, h('td', { colspan: '5' }, h('b', { text: b }), h('span', { class: 'meta', text: '  ' + meta }))));
+      rs.forEach(function (r) {
+        var t = tally(slots.filter(function (x) { return x.r.id === r.id; }));
+        rows.push(h('tr', null,
+          h('td', null, h('button', { class: 'linkbtn', type: 'button', text: posLabel(r), title: 'Open the positions', onclick: function () { goDetails(r); } })),
+          h('td', { text: r.minExp || 'Not specified' }), num(t.total), num(t.filled), h('td', { class: 'barcell' }, bar(t))));
+      });
+    });
+    body.appendChild(h('section', { class: 'box bx' }, h('h2', { text: 'By requirement' }),
+      h('div', { class: 'scroll' }, h('table', { class: 'sumtbl' },
+        h('thead', null, h('tr', null, [['Position', ''], ['Experience', ''], ['Needed', 'num'], ['Filled', 'num'], ['Progress', '']].map(function (c) { return h('th', { class: c[1], text: c[0] }); }))),
+        h('tbody', null, rows)))));
   }
 
   function slotRow(r, n) {
@@ -213,29 +287,36 @@
     return tr;
   }
 
+  function isOpen(r) { return S.printing || filtering() || !!S.open[r.id]; }
   function line(r) {
     var shown = [], n, filled = 0;
     for (n = 1; n <= r.nos; n++) { var s = slotOf(r, n); if (rank(s.status) >= ACCEPTED) filled++; if (matches(r, n, s)) shown.push(n); }
     if (filtering() && !shown.length) return null;
+    var open = isOpen(r);
     var facts = [chip(r.nos + (r.nos === 1 ? ' position' : ' positions'), 'acc'), chip('Experience: ' + (r.minExp || 'Not specified'))];
     var want = h('div', { class: 'want' },
       h('div', null, h('span', { class: 'k', text: 'Qualification: ' }), r.qualification || 'Not specified'),
       r.specificExp ? h('div', null, h('span', { class: 'k', text: 'Experience wanted: ' }), r.specificExp) : null,
       r.toShare ? h('div', null, h('span', { class: 'k', text: 'K&P to share: ' }), r.toShare) : null,
       (r.jd && r.jd.length) ? h('details', null, h('summary', { text: 'Job description from TUMC' }), h('ul', null, r.jd.map(function (t) { return h('li', { text: t }); }))) : null);
-    return h('section', { class: 'box line' },
+    var t = tally(slots4(r));
+    return h('section', { class: 'box line', id: 'line-' + r.id },
       h('div', { class: 'line-head' },
         h('div', null,
           h('div', { class: 'line-title' }, chip(r.stream, 'acc'), title(r), levelChip(r) ? chip(levelChip(r)) : null),
           h('div', { class: 'facts' }, facts)),
         h('div', { class: 'line-right' },
+          h('div', { class: 'minibar' }, bar(t)),
           h('span', { class: 'count', text: filled + ' of ' + r.nos + ' filled' }),
-          canWrite() ? h('button', { class: 'btn sm noprint', type: 'button', text: 'Edit', onclick: function () { openForm(r); } }) : null)),
-      want,
-      h('div', { class: 'scroll' }, h('table', null,
-        h('thead', null, h('tr', null, ['#', 'Filled', 'Candidate', 'Status', 'Date of joining', 'Remarks'].map(function (t) { return h('th', { text: t }); }))),
-        h('tbody', null, shown.map(function (x) { return slotRow(r, x); })))));
+          canWrite() ? h('button', { class: 'btn sm noprint', type: 'button', text: 'Edit', onclick: function () { openForm(r); } }) : null,
+          filtering() ? null : h('button', { class: 'btn sm noprint', type: 'button', 'data-k': r.id + ':toggle', 'aria-expanded': open ? 'true' : 'false', text: open ? 'Hide positions' : 'Show positions',
+            onclick: function () { S.open[r.id] = !S.open[r.id]; render(); } }))),
+      open ? [want,
+        h('div', { class: 'scroll' }, h('table', null,
+          h('thead', null, h('tr', null, ['#', 'Filled', 'Candidate', 'Status', 'Date of joining', 'Remarks'].map(function (t) { return h('th', { text: t }); }))),
+          h('tbody', null, shown.map(function (x) { return slotRow(r, x); }))))] : null);
   }
+  function slots4(r) { var out = []; for (var n = 1; n <= r.nos; n++) out.push({ r: r, n: n, s: slotOf(r, n) }); return out; }
 
   function renderFilters() {
     function fill(id, values, current) {
@@ -285,10 +366,23 @@
     $('updated').textContent = last ? 'Last updated ' + new Date(last).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' IST.' : '';
   }
 
+  function renderTabs() {
+    var sum = S.tab === 'summary';
+    $('tab-summary').setAttribute('aria-selected', sum ? 'true' : 'false');
+    $('tab-details').setAttribute('aria-selected', sum ? 'false' : 'true');
+    $('pane-summary').hidden = !(sum || S.printing);
+    $('pane-details').hidden = !(!sum || S.printing);
+    var every = S.reqs.length && S.reqs.every(function (r) { return S.open[r.id]; });
+    $('btn-expand').textContent = every ? 'Collapse all' : 'Expand all';
+    $('btn-expand').hidden = filtering();
+  }
+
   function render() {
     var a = document.activeElement, key = a && a.getAttribute ? a.getAttribute('data-k') : null;
     var pos = (a && typeof a.selectionStart === 'number' && a.type === 'text') ? a.selectionStart : null;
-    renderHeader(); renderFilters(); renderTiles(); renderSchedule(); renderView();
+    renderHeader(); renderTabs();
+    if (S.tab === 'summary' || S.printing) { renderTiles(); renderSummary(); }
+    if (S.tab === 'details' || S.printing) { renderFilters(); renderView(); }
     if (key) {
       var el = document.querySelector('[data-k="' + key.replace(/"/g, '') + '"]');
       if (el && el !== document.activeElement) { el.focus(); if (pos != null && el.setSelectionRange) { try { el.setSelectionRange(pos, pos); } catch (e) { /* ignore */ } } }
@@ -411,6 +505,15 @@
     $('f-batch').addEventListener('change', function (e) { S.f.batch = e.target.value; render(); });
     $('f-stream').addEventListener('change', function (e) { S.f.stream = e.target.value; render(); });
     $('f-status').addEventListener('change', function (e) { S.f.status = e.target.value; render(); });
+    $('tab-summary').addEventListener('click', function () { setTab('summary'); });
+    $('tab-details').addEventListener('click', function () { setTab('details'); });
+    $('btn-expand').addEventListener('click', function () {
+      var every = S.reqs.every(function (r) { return S.open[r.id]; });
+      S.open = {}; if (!every) S.reqs.forEach(function (r) { S.open[r.id] = true; });
+      render();
+    });
+    window.addEventListener('beforeprint', function () { S.printing = true; render(); });
+    window.addEventListener('afterprint', function () { S.printing = false; render(); });
     $('btn-add').addEventListener('click', function () { openForm(null); });
     $('btn-csv').addEventListener('click', exportCsv);
     $('btn-print').addEventListener('click', function () { window.print(); });
