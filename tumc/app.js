@@ -58,7 +58,7 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.hidden = true; }, 3500);
   }
   function rank(s) { return STATUSES.indexOf(s); }
-  function canWrite() { return !!(S.user && (S.user.role === 'admin' || S.user.role === 'editor')); }
+  function canWrite() { return !!(S.user && (S.user.role === 'admin' || S.user.role === 'editor' || S.user.role === 'tumc')); }
   function isAdmin() { return !!(S.user && S.user.role === 'admin'); }
   function slotId(r, n) { return r.id + '_' + n; }
   function slotOf(r, n) {
@@ -537,7 +537,7 @@
       api.db.collection('tumc_slots').onSnapshot(onSlotSnap, onErr);
     },
     setUser: function (u) {
-      if (u && ['admin', 'editor', 'viewer'].indexOf(u.role) < 0) {
+      if (u && ['admin', 'editor', 'viewer', 'tumc'].indexOf(u.role) < 0) {
         toast(u.email + ' is not on the K&P access list, so the tracker stays view only.');
         u = { email: u.email, role: 'none' };
       }
